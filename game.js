@@ -26,7 +26,7 @@ function project(point){return projectPoint(point,camera());}
 function newGame(){
  clearTimeout(advanceTimer);advanceTimer=null;
  size=LEVEL_SIZES[levelIndex];selector.value=String(levelIndex);
- loading=true;session=null;document.getElementById('run-ended').hidden=true;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
+ loading=true;session=null;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
  status.textContent='Building a tougher puzzle…';canvas.setAttribute('aria-busy','true');
  generator?.terminate();
  generator=new Worker(new URL('./generator.worker.js',import.meta.url),{type:'module'});
@@ -36,39 +36,40 @@ function newGame(){
 function receivePuzzle({data}){
  if(data.id!==requestId)return;
  if(data.error){status.textContent='No puzzle met all constraints. Reset to retry.';canvas.setAttribute('aria-busy','false');return;}
- blocks=data.blocks;session=createSession(blocks,data.analysis.minMoves);loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
- status.textContent='Only two mistakes allowed. Blocked taps cost a move.';updateControls();canvas.setAttribute('aria-busy','false');
+ blocks=data.blocks;session=createSession(blocks);loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
+ status.textContent='Tap to slide into a gap, or escape along a clear path.';updateControls();canvas.setAttribute('aria-busy','false');
  document.title=`Cubenikal · ${size} × ${size} × ${size}`;
- canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to release, scroll or pinch to zoom. Press R for a new puzzle.`);
+ canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to slide or release, scroll or pinch to zoom. Press R for a new puzzle.`);
 };
 function generationError(){status.textContent='Could not load the puzzle generator. Reload to retry.';canvas.setAttribute('aria-busy','false');};
 selector.onchange=()=>{levelIndex=Number(selector.value);newGame();};
+const SLIDE_MS=260;
+function sliding(block,now=performance.now()){return block.slide&&now-block.slide.started<SLIDE_MS;}
 function updateControls(){
  if(!session)return;
  const remaining=blocks.filter(b=>!b.removed).length;
- moveCount.textContent=`${session.movesLeft} moves · ${remaining} blocks left`;
- document.getElementById('run-ended').hidden=!session.failed;
- undoButton.textContent=`Undo (${session.undosLeft})`;
- undoButton.disabled=session.failed||session.complete||!session.history.length||!session.undosLeft;
- if(session.failed){
-  const explanation=`Blocks remaining: ${remaining}. Moves remaining: ${session.movesLeft}. There are not enough moves to finish.`;
-  status.textContent='Run ended — reset to play again.';
-  document.getElementById('failure-reason').textContent=explanation;
- }
+ moveCount.textContent=`${remaining} blocks left`;
+ undoButton.textContent='Undo';
+ undoButton.disabled=!session.history.length;
 }
 function attempt(b){
- if(loading||!session)return;
- const result=playMove(session,b);
+ if(loading||!session||blocks.some(block=>sliding(block)))return;
+ const from=[...b.pos],result=playMove(session,b);
  if(result==='ignored')return;
  revision++;
  if(result==='removed'){b.exit=performance.now();status.textContent='';}
- else{flash=b;flashUntil=performance.now()+450;status.textContent='Blocked — the whole path must be clear, even beyond a gap. One move spent.';}
+ else if(result==='slid'){b.slide={from,started:performance.now()};status.textContent='Slid into the gap.';}
+ else{flash=b;flashUntil=performance.now()+450;status.textContent='Another block is directly in the way.';}
  finished=session.complete;updateControls();
  if(finished){status.textContent='Cleared. Loading the next puzzle…';advanceTimer=setTimeout(()=>{levelIndex=nextLevel(levelIndex);newGame();},900);}
 }
-undoButton.onclick=()=>{if(session&&undoMove(session)){revision++;status.textContent='Block restored. Spent moves are not refunded.';updateControls();}};
+undoButton.onclick=()=>{
+ if(session&&undoMove(session)){
+  clearTimeout(advanceTimer);advanceTimer=null;finished=session.complete;flash=null;
+  revision++;status.textContent='Last move undone.';updateControls();
+ }
+};
 document.getElementById('reset').onclick=newGame;
-document.getElementById('retry').onclick=newGame;
 function polygon(points){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();}
 function arrow(face,center){
  const d=face.b.dir,n=face.def.n;
@@ -88,7 +89,7 @@ function arrow(face,center){
 function draw(now){
  requestAnimationFrame(draw);
  const rect=canvas.getBoundingClientRect(),dpr=Math.min(devicePixelRatio||1,2);
- const active=blocks.some(b=>b.removed&&now-b.exit<650)||(flash&&now<flashUntil);
+ const active=blocks.some(b=>(b.removed&&now-b.exit<650)||sliding(b,now))||(flash&&now<flashUntil);
  const frame=[rect.width,rect.height,dpr,yaw,pitch,zoom,revision,Boolean(flash&&now<flashUntil)].join(':');
  if(!active&&frame===lastFrame)return;
  lastFrame=active?'':frame;
@@ -96,13 +97,15 @@ function draw(now){
  width=rect.width;height=rect.height;canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);
  }
  ctx.clearRect(0,0,width,height);faces=[];
- const occupied=new Set(blocks.filter(b=>!b.removed).map(b=>b.pos.join(',')));
+ const occupied=new Set(blocks.filter(b=>!b.removed&&!sliding(b,now)).map(b=>b.pos.join(',')));
  for(const b of blocks){let travel=0,alpha=1,shrink=1;if(b.removed){const elapsed=(now-b.exit)/650;if(!b.exit||elapsed>=1)continue;travel=elapsed*elapsed*size*5;alpha=1-elapsed;shrink=1-.25*Math.min(1,elapsed/.4);}
- const center=b.pos.map((v,i)=>v-(size-1)/2+b.dir[i]*travel);if(b===flash&&now<flashUntil)center[0]+=Math.sin(now*.06)*.04;
+ const progress=b.slide?Math.min(1,(now-b.slide.started)/SLIDE_MS):1,eased=1-(1-progress)**3;
+ const position=sliding(b,now)?b.slide.from.map((v,i)=>v+(b.pos[i]-v)*eased):b.pos;
+ const center=position.map((v,i)=>v-(size-1)/2+b.dir[i]*travel);if(b===flash&&now<flashUntil)center[0]+=Math.sin(now*.06)*.04;
  // Stop the entire departing cube before it crosses the near plane.
  if(rotate(center)[2]+Math.sqrt(3)*.5*shrink>=size*3.5-.1)continue;
  for(const def of faceDefs){
-  if(!b.removed&&occupied.has(b.pos.map((v,i)=>v+def.n[i]).join(',')))continue;
+  if(!b.removed&&!sliding(b,now)&&occupied.has(b.pos.map((v,i)=>v+def.n[i]).join(',')))continue;
   const fc=center.map((v,i)=>v+def.n[i]*.5*shrink),viewCenter=rotate(fc),normal=rotate(def.n);
   if(normal[0]*-viewCenter[0]+normal[1]*-viewCenter[1]+normal[2]*(size*3.5-viewCenter[2])<=.001)continue;
   const projected=project(fc),pts=def.v.map(v=>project(center.map((n,i)=>n+v[i]*.5*shrink)));

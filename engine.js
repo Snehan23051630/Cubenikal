@@ -1,8 +1,16 @@
 export const DIRECTIONS = [[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-export function canEscape(block, blocks) {
+// Empty cells before the nearest obstacle; Infinity means the block can exit.
+export function moveDistance(block,blocks){
  const axis=block.dir.findIndex(v=>v!==0);
- return !blocks.some(o=>o!==block&&!o.removed&&[0,1,2].every(i=>i===axis||o.pos[i]===block.pos[i])&&(o.pos[axis]-block.pos[axis])*block.dir[axis]>0);
+ let nearest=Infinity;
+ for(const other of blocks){
+  if(other===block||other.removed||!block.pos.every((v,i)=>i===axis||v===other.pos[i]))continue;
+  const distance=(other.pos[axis]-block.pos[axis])*block.dir[axis];
+  if(distance>0)nearest=Math.min(nearest,distance);
+ }
+ return nearest===Infinity?Infinity:nearest-1;
 }
+export function canEscape(block,blocks){return moveDistance(block,blocks)===Infinity;}
 export function makeLevel(size, random=Math.random, chained=false) {
  const blocks=[],occupied=new Map(),choices=[],known=new Set();
  const key=p=>p.join(',');
