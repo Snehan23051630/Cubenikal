@@ -6,7 +6,7 @@ Choose 5, 7, 9, 11, 13, or 15 blocks per side. Drag to rotate, scroll/pinch to z
 
 ## Strict rules
 
-The budget is the exact minimum number of removals plus two. Both successful removals and blocked taps cost one move. A run ends as soon as its remaining budget cannot cover the remaining blocks. Two undos can restore recent removals, but never refund moves; removing the restored block spends another move. Reset or R generates a new puzzle at the current size. Clearing advances through the supported sizes, with fresh puzzles at 15 after the last level.
+The budget is the exact minimum number of removals plus two. Both successful removals and blocked taps cost one move. A run ends as soon as its remaining budget cannot cover the remaining blocks. A visible Run ended panel shows both counts and offers Try again; further block taps cannot spend more moves. A gap immediately below or beside a block is insufficient if another block obstructs the same ray farther away. Two undos can restore recent removals, but never refund moves; removing the restored block spends another move. Reset or R generates a new puzzle at the current size. Clearing advances through the supported sizes, with fresh puzzles at 15 after the last level.
 
 ## Spatial interlock generation
 
@@ -33,3 +33,7 @@ Strict penalties discourage blind tapping. Legal moves still cannot create struc
 Run `npm test` (Node.js 18+) for neighbor constraints, physical ray checks, core-first insertion, full solutions at every size, opening/depth filters, solver equivalence, penalty exhaustion, and non-refunding undo.
 
 Run `npm run validate:levels -- 5` for a fresh 5³ puzzle's measured validation report; omit the size to check all supported sizes. Reports include opening count, longest dependency chain, cross-axis edge count, and generation time.
+
+## Camera and input
+
+`camera.js` shares rotation and projection math with 3D ray-box picking, so selection follows the nearest actual solid cube regardless of screen density. Departing cubes are clipped before the camera near plane to prevent mirrored or reversed exits. Tests verify projected arrows and movement agree in all six directions across rotated views.

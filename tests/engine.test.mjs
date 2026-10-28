@@ -10,3 +10,8 @@ test('a 10 by 10 by 10 puzzle has 1000 distinct cubes and a complete solution',(
  const blocks=makeLevel(10);assert.equal(blocks.length,1000);assert.equal(new Set(blocks.map(b=>b.pos.join(','))).size,1000);
  let remaining=1000;while(remaining){const free=blocks.filter(b=>!b.removed&&canEscape(b,blocks));assert.ok(free.length,'large puzzle must not deadlock');for(const b of free){b.removed=true;remaining--;}}
 });
+test('an empty neighboring cell does not permit passage through a more distant blocker',()=>{
+ const b={pos:[0,3,0],dir:[0,-1,0]},distant={pos:[0,0,0]};
+ assert.equal(canEscape(b,[b,distant]),false);
+ distant.removed=true;assert.equal(canEscape(b,[b,distant]),true);
+});

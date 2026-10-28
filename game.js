@@ -1,3 +1,4 @@
+import {rotatePoint,projectPoint,pickBlock} from './camera.js';
 import {createSession,playMove,undoMove} from './session.js';
 import {LEVEL_SIZES,nextLevel} from './levels.js';
 const canvas=document.getElementById('puzzle'),ctx=canvas.getContext('2d');
@@ -19,12 +20,13 @@ function steelFace(face){
  return gradient;
 }
 const faceDefs=[{n:[1,0,0],v:[[1,-1,-1],[1,1,-1],[1,1,1],[1,-1,1]]},{n:[-1,0,0],v:[[-1,-1,1],[-1,1,1],[-1,1,-1],[-1,-1,-1]]},{n:[0,1,0],v:[[-1,1,-1],[-1,1,1],[1,1,1],[1,1,-1]]},{n:[0,-1,0],v:[[-1,-1,1],[-1,-1,-1],[1,-1,-1],[1,-1,1]]},{n:[0,0,1],v:[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]]},{n:[0,0,-1],v:[[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]]}];
-function rotate([x,y,z]){const a=x*Math.cos(yaw)+z*Math.sin(yaw),b=-x*Math.sin(yaw)+z*Math.cos(yaw);return[a,y*Math.cos(pitch)-b*Math.sin(pitch),y*Math.sin(pitch)+b*Math.cos(pitch)];}
-function project(p){const [x,y,z]=rotate(p),scale=Math.min(width*.37,height*.37)/size*zoom;const perspective=1/(1-z/(size*3.5));return[width/2+x*scale*perspective,height*.5-y*scale*perspective,z];}
+function camera(){return {yaw,pitch,size,width,height,zoom};}
+function rotate(point){return rotatePoint(point,yaw,pitch);}
+function project(point){return projectPoint(point,camera());}
 function newGame(){
  clearTimeout(advanceTimer);advanceTimer=null;
  size=LEVEL_SIZES[levelIndex];selector.value=String(levelIndex);
- loading=true;session=null;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
+ loading=true;session=null;document.getElementById('run-ended').hidden=true;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
  status.textContent='Building a tougher puzzle…';canvas.setAttribute('aria-busy','true');
  generator?.terminate();
  generator=new Worker(new URL('./generator.worker.js',import.meta.url),{type:'module'});
@@ -43,10 +45,16 @@ function generationError(){status.textContent='Could not load the puzzle generat
 selector.onchange=()=>{levelIndex=Number(selector.value);newGame();};
 function updateControls(){
  if(!session)return;
- moveCount.textContent=`${session.movesLeft} moves left`;
+ const remaining=blocks.filter(b=>!b.removed).length;
+ moveCount.textContent=`${session.movesLeft} moves · ${remaining} blocks left`;
+ document.getElementById('run-ended').hidden=!session.failed;
  undoButton.textContent=`Undo (${session.undosLeft})`;
  undoButton.disabled=session.failed||session.complete||!session.history.length||!session.undosLeft;
- if(session.failed)status.textContent='Not enough moves left to finish. Reset to try again.';
+ if(session.failed){
+  const explanation=`Blocks remaining: ${remaining}. Moves remaining: ${session.movesLeft}. There are not enough moves to finish.`;
+  status.textContent='Run ended — reset to play again.';
+  document.getElementById('failure-reason').textContent=explanation;
+ }
 }
 function attempt(b){
  if(loading||!session)return;
@@ -54,12 +62,13 @@ function attempt(b){
  if(result==='ignored')return;
  revision++;
  if(result==='removed'){b.exit=performance.now();status.textContent='';}
- else{flash=b;flashUntil=performance.now()+450;status.textContent='Blocked — one move spent.';}
+ else{flash=b;flashUntil=performance.now()+450;status.textContent='Blocked — the whole path must be clear, even beyond a gap. One move spent.';}
  finished=session.complete;updateControls();
  if(finished){status.textContent='Cleared. Loading the next puzzle…';advanceTimer=setTimeout(()=>{levelIndex=nextLevel(levelIndex);newGame();},900);}
 }
 undoButton.onclick=()=>{if(session&&undoMove(session)){revision++;status.textContent='Block restored. Spent moves are not refunded.';updateControls();}};
 document.getElementById('reset').onclick=newGame;
+document.getElementById('retry').onclick=newGame;
 function polygon(points){ctx.beginPath();points.forEach((p,i)=>i?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.closePath();}
 function arrow(face,center){
  const d=face.b.dir,n=face.def.n;
@@ -69,6 +78,7 @@ function arrow(face,center){
  const side=[n[1]*d[2]-n[2]*d[1],n[2]*d[0]-n[0]*d[2],n[0]*d[1]-n[1]*d[0]];
  const point=(along,across=0)=>project(center.map((v,i)=>v+(d[i]*along+side[i]*across)*face.shrink));
  const tail=point(-.24),tip=point(.24),left=point(.045,.16),right=point(.045,-.16);
+ if(!tail||!tip||!left||!right)return;
  ctx.strokeStyle='#303a43';
  ctx.lineWidth=Math.max(.85,Math.min(width*.37,height*.37)/size*zoom*.025);
  ctx.lineCap='round';ctx.lineJoin='round';ctx.beginPath();
@@ -89,14 +99,23 @@ function draw(now){
  const occupied=new Set(blocks.filter(b=>!b.removed).map(b=>b.pos.join(',')));
  for(const b of blocks){let travel=0,alpha=1,shrink=1;if(b.removed){const elapsed=(now-b.exit)/650;if(!b.exit||elapsed>=1)continue;travel=elapsed*elapsed*size*5;alpha=1-elapsed;shrink=1-.25*Math.min(1,elapsed/.4);}
  const center=b.pos.map((v,i)=>v-(size-1)/2+b.dir[i]*travel);if(b===flash&&now<flashUntil)center[0]+=Math.sin(now*.06)*.04;
- for(const def of faceDefs){if(rotate(def.n)[2]<=.01)continue;if(!b.removed&&occupied.has(b.pos.map((v,i)=>v+def.n[i]).join(',')))continue;const fc=center.map((v,i)=>v+def.n[i]*.5*shrink);const pts=def.v.map(v=>project(center.map((n,i)=>n+v[i]*.5*shrink)));faces.push({b,def,center:fc,pts,z:project(fc)[2],alpha,shrink});}}
+ // Stop the entire departing cube before it crosses the near plane.
+ if(rotate(center)[2]+Math.sqrt(3)*.5*shrink>=size*3.5-.1)continue;
+ for(const def of faceDefs){
+  if(!b.removed&&occupied.has(b.pos.map((v,i)=>v+def.n[i]).join(',')))continue;
+  const fc=center.map((v,i)=>v+def.n[i]*.5*shrink),viewCenter=rotate(fc),normal=rotate(def.n);
+  if(normal[0]*-viewCenter[0]+normal[1]*-viewCenter[1]+normal[2]*(size*3.5-viewCenter[2])<=.001)continue;
+  const projected=project(fc),pts=def.v.map(v=>project(center.map((n,i)=>n+v[i]*.5*shrink)));
+  if(!projected||pts.some(p=>!p))continue;
+  faces.push({b,def,center:fc,pts,z:projected[2],alpha,shrink});
+ }}
  faces.sort((a,b)=>a.z-b.z);
  for(const f of faces){ctx.globalAlpha=f.alpha;polygon(f.pts);ctx.fillStyle=steelFace(f);ctx.fill();ctx.strokeStyle=f.b===flash&&now<flashUntil?'#e4ad83':'#4b565f';ctx.lineWidth=f.b===flash&&now<flashUntil?1.7:.85;ctx.stroke();
  // Inset highlight gives each block a shallow, solid steel bevel.
  const mid=project(f.center),inset=f.pts.map(p=>[p[0]+(mid[0]-p[0])*.045,p[1]+(mid[1]-p[1])*.045]);
  polygon(inset);ctx.strokeStyle='rgba(255,255,255,.42)';ctx.lineWidth=.65;ctx.stroke();
  arrow(f,f.center,now);}ctx.globalAlpha=1;}
-function hit(x,y){for(let i=faces.length-1;i>=0;i--){const f=faces[i];if(f.b.removed)continue;polygon(f.pts);if(ctx.isPointInPath(x*(canvas.width/width),y*(canvas.height/height)))return f.b;}return null;}
+function hit(x,y){return pickBlock(x,y,blocks,camera());}
 let pointers=new Map(),drag=null,pinchDistance=0;
 canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,[e.clientX,e.clientY]);drag={x:e.clientX,y:e.clientY,lastX:e.clientX,lastY:e.clientY,moved:false};if(pointers.size===2){const p=[...pointers.values()];pinchDistance=Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1]);drag.moved=true;}});
 canvas.addEventListener('pointermove',e=>{if(!pointers.has(e.pointerId)||!drag)return;pointers.set(e.pointerId,[e.clientX,e.clientY]);if(pointers.size===2){const p=[...pointers.values()],d=Math.hypot(p[0][0]-p[1][0],p[0][1]-p[1][1]);if(pinchDistance)zoom=Math.max(.55,Math.min(1.65,zoom*d/pinchDistance));pinchDistance=d;drag.moved=true;return;}if(Math.hypot(e.clientX-drag.x,e.clientY-drag.y)>5)drag.moved=true;if(drag.moved){yaw+=(e.clientX-drag.lastX)*.008;pitch+=(e.clientY-drag.lastY)*.008;}drag.lastX=e.clientX;drag.lastY=e.clientY;});
