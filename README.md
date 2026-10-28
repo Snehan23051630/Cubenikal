@@ -1,17 +1,21 @@
 # Cubenikal
 
-A full-screen HTML5/JavaScript spatial puzzle, with solid steel blocks and a compact size selector. Directional silver lighting, beveled edges, and perspective keep the cube's faces distinct while rotating.
+A removal-only steel cube puzzle with strict move penalties. Run `npm start` (Python 3), then open the HTTP server in a browser. Module workers require HTTP rather than a file URL. No external packages or credentials are needed.
 
-Run `npm start` (Python 3 required) and open the server in a browser.
+Choose 5, 7, 9, 11, 13, or 15 blocks per side. Drag to rotate, scroll/pinch to zoom, and tap a block to remove it along its arrow. Arrows appear only on faces parallel to movement; rotate to inspect them. There are no automatic hints or free-block highlights. Departing blocks shrink to 75%.
 
-Drag to rotate, tap a block to release it along its arrow, and scroll or pinch to zoom. A block only leaves when its whole path is clear. Arrows lie flat on faces parallel to movement; rotate to reveal them. Press **R** to generate a new puzzle at the current size.
+## Strict rules
 
-Start at **5 × 5 × 5** (125 blocks). Clearing all blocks automatically advances to **7, 9, 11, 13, then 15 per side** (3,375 blocks). After the hardest level, clearing it generates another puzzle at that size. Each new level starts at a clear three-quarter viewing angle. Progress lasts for the current page session; reloading starts at 5 again.
+The budget is the exact minimum number of removals plus two. Both successful removals and blocked taps cost one move. A run ends as soon as its remaining budget cannot cover the remaining blocks. Two undos can restore recent removals, but never refund moves; removing the restored block spends another move. Reset or R generates a new puzzle at the current size. Clearing advances through the supported sizes, with fresh puzzles at 15 after the last level.
 
-Run `npm test` (Node.js 18+) for directional rules, progression, and complete solutions at every supported size. No external dependencies or credentials are required. Internal faces are omitted and idle frames are not repainted.
+## Generation and validation
 
-## Size selection and harder puzzles
+`difficulty.js` constructs a continuous serpentine lattice path, varies plane sweep axes and cube transforms, and inserts blocks in reverse solution order. Each arrow follows a geometric dependency on its predecessor. This produces a full dependency chain: exactly one legal removal at every stage, with dependency depth equal to the block count (125–3,375). The chain layout has a learnable traversal pattern; these guarantees do not prove subjective difficulty or require five-move foresight.
 
-The compact selector lets you jump directly to any supported size. Clearing a puzzle still advances automatically. Generation runs in a module Web Worker, scores 24 candidates, and selects the highest-scoring solvable candidate. It favors long blocker chains and fewer initial openings, using a chain-biased generator alongside a random baseline. This is a bounded search, not a proof of maximum possible difficulty. All legal removals remain safe; the challenge is finding openings and tracing dependencies.
+An internal BFS validates legal removal states, rejects branching above two, and proves the exact minimum move count. The constructor produces a one-state-wide frontier. Generation fails closed if validation exceeds its state limit, finds a cycle, or finds depth below 30. A background module worker handles generation.
 
-Departing blocks smoothly shrink to 75% size while escaping; their arrows shrink with them. Stationary blocks keep their original size. New files: `difficulty.js` (analysis/search), `generator.worker.js` (background generation). Serve via HTTP, as module workers do not work from a directly opened file URL.
+Removing a legal block can never create a structural trap. Failure comes from the move budget. The earlier proposal that every block must block two or three earlier blocks is not enforced: seed and chain-end blocks require exceptions, and strict single-move sequencing is the enforced constraint. Multi-directional blocks and structural deadlocks are not part of this removal-only variant.
+
+## Tests
+
+`npm test` (Node.js 18+) covers obstruction, full solutions, every size's strict branching/depth, BFS rejection, move penalties, budget exhaustion, and limited non-refunding undo.
