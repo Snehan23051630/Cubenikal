@@ -2,7 +2,7 @@ import {createSession,playMove,undoMove} from './session.js';
 import {LEVEL_SIZES,nextLevel} from './levels.js';
 const canvas=document.getElementById('puzzle'),ctx=canvas.getContext('2d');
 const selector=document.getElementById('size'),status=document.getElementById('status');
-const generator=new Worker(new URL('./generator.worker.js',import.meta.url),{type:'module'});
+let generator=null;
 let requestId=0,loading=false,session=null;
 const moveCount=document.getElementById('moves'),undoButton=document.getElementById('undo');
 let levelIndex=0,size=LEVEL_SIZES[0],advanceTimer=null;
@@ -26,17 +26,20 @@ function newGame(){
  size=LEVEL_SIZES[levelIndex];selector.value=String(levelIndex);
  loading=true;session=null;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
  status.textContent='Building a tougher puzzle…';canvas.setAttribute('aria-busy','true');
+ generator?.terminate();
+ generator=new Worker(new URL('./generator.worker.js',import.meta.url),{type:'module'});
+ generator.onmessage=receivePuzzle;generator.onerror=generationError;
  generator.postMessage({id:++requestId,size});
 }
-generator.onmessage=({data})=>{
+function receivePuzzle({data}){
  if(data.id!==requestId)return;
- if(data.error){status.textContent='Generation failed. Press R to retry.';canvas.setAttribute('aria-busy','false');return;}
+ if(data.error){status.textContent='No puzzle met all constraints. Reset to retry.';canvas.setAttribute('aria-busy','false');return;}
  blocks=data.blocks;session=createSession(blocks,data.analysis.minMoves);loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
  status.textContent='Only two mistakes allowed. Blocked taps cost a move.';updateControls();canvas.setAttribute('aria-busy','false');
  document.title=`Cubenikal · ${size} × ${size} × ${size}`;
  canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to release, scroll or pinch to zoom. Press R for a new puzzle.`);
 };
-generator.onerror=()=>{status.textContent='Could not load the puzzle generator. Reload to retry.';canvas.setAttribute('aria-busy','false');};
+function generationError(){status.textContent='Could not load the puzzle generator. Reload to retry.';canvas.setAttribute('aria-busy','false');};
 selector.onchange=()=>{levelIndex=Number(selector.value);newGame();};
 function updateControls(){
  if(!session)return;

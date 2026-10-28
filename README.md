@@ -8,14 +8,28 @@ Choose 5, 7, 9, 11, 13, or 15 blocks per side. Drag to rotate, scroll/pinch to z
 
 The budget is the exact minimum number of removals plus two. Both successful removals and blocked taps cost one move. A run ends as soon as its remaining budget cannot cover the remaining blocks. Two undos can restore recent removals, but never refund moves; removing the restored block spends another move. Reset or R generates a new puzzle at the current size. Clearing advances through the supported sizes, with fresh puzzles at 15 after the last level.
 
-## Generation and validation
+## Spatial interlock generation
 
-`difficulty.js` constructs a continuous serpentine lattice path, varies plane sweep axes and cube transforms, and inserts blocks in reverse solution order. Each arrow follows a geometric dependency on its predecessor. This produces a full dependency chain: exactly one legal removal at every stage, with dependency depth equal to the block count (125–3,375). The chain layout has a learnable traversal pattern; these guarantees do not prove subjective difficulty or require five-move foresight.
+`generation.js` samples directions from all six cardinal vectors subject to ray clearance and neighbor exclusions. Coordinates define positions, shell membership, and obstruction tests; they do not select arrow directions. A randomized shell-removal plan is reversed to establish core-first placement. `difficulty.js` refines orientations using random proposals, rejecting adjacent matches, inward dependencies on smaller shells, and cycles. It reconstructs the accepted layout from an empty grid in reverse dependency order and verifies each insertion has a clear escape ray. Outer insertions then obstruct previously placed inner blocks.
 
-An internal BFS validates legal removal states, rejects branching above two, and proves the exact minimum move count. The constructor produces a one-state-wide frontier. Generation fails closed if validation exceeds its state limit, finds a cycle, or finds depth below 30. A background module worker handles generation.
+Every accepted puzzle must satisfy:
 
-Removing a legal block can never create a structural trap. Failure comes from the move budget. The earlier proposal that every block must block two or three earlier blocks is not enforced: seed and chain-end blocks require exceptions, and strict single-move sequencing is the enforced constraint. Multi-directional blocks and structural deadlocks are not part of this removal-only variant.
+- No two face-adjacent blocks have the same direction (six orthogonal neighbors, not diagonals).
+- At most 15% of blocks are immediately removable in the initial state.
+- Dependency depth at least `max(30, 4 × size)`: 30, 30, 36, 44, 52, 60 across the six sizes.
+- Cross-axis blocking edges involving all three axes, with at least one cross-axis edge per two blocks overall.
+- Complete solvability and an exact minimum of one successful removal per block.
 
-## Tests
+The prior single-path serpentine generator is removed. A puzzle may have several simultaneous legal moves within the opening limit. Generation is a bounded randomized search: failed candidates are discarded; exhausted searches display a retry message rather than silently relaxing constraints. It runs in a background worker and usually takes seconds, longer at larger sizes. Changing size or resetting cancels stale work.
 
-`npm test` (Node.js 18+) covers obstruction, full solutions, every size's strict branching/depth, BFS rejection, move penalties, budget exhaustion, and limited non-refunding undo.
+## Solver
+
+The internal BFS uses partial-order reduction for removal-only play. Legal removals commute and cannot disable each other, so exploring one canonical ordering avoids exponentially many equivalent subsets without losing solvability or changing the minimum move count. Tests compare it with exhaustive state BFS on small arbitrary puzzles. This reduction would be invalid for sliding or other mechanics that can introduce obstacles.
+
+Strict penalties discourage blind tapping. Legal moves still cannot create structural deadlocks, and these measured constraints do not prove subjective difficulty or require a player to plan a fixed number of moves ahead.
+
+## Validation
+
+Run `npm test` (Node.js 18+) for neighbor constraints, physical ray checks, core-first insertion, full solutions at every size, opening/depth filters, solver equivalence, penalty exhaustion, and non-refunding undo.
+
+Run `npm run validate:levels -- 5` for a fresh 5³ puzzle's measured validation report; omit the size to check all supported sizes. Reports include opening count, longest dependency chain, cross-axis edge count, and generation time.
