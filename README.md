@@ -1,9 +1,11 @@
 # Cubenikal
 
-A full-screen HTML5/JavaScript puzzle: just a 10 × 10 × 10 cluster of 1,000 small white cubes. No menus, levels, statistics, panels, or external dependencies.
+A full-screen HTML5/JavaScript spatial puzzle, with solid steel blocks and no menus or panels. Directional silver lighting, beveled edges, and perspective keep the cube's faces distinct while rotating.
 
 Run `npm start` (Python 3 required) and open the server in a browser.
 
-Drag to rotate, tap a block to release it along its arrow, and scroll or pinch to zoom. A block only leaves when its whole path is clear. Arrows are drawn flat on faces parallel to the escape direction; rotate to see arrows on other faces. Press **R** to generate a fresh puzzle, including after clearing the cube.
+Drag to rotate, tap a block to release it along its arrow, and scroll or pinch to zoom. A block only leaves when its whole path is clear. Arrows lie flat on faces parallel to movement; rotate to reveal them. Press **R** to restart the current level.
 
-Run `npm test` (Node.js 18+) to check directional obstruction and complete puzzle solutions. Generation uses a randomized valid removal sequence, so every puzzle is solvable. The renderer omits internal faces and redraws only when the view or puzzle changes or an animation is active.
+Start at **5 × 5 × 5** (125 blocks). Clearing all blocks automatically advances to **7, 9, 11, 13, then 15 per side** (3,375 blocks). After the hardest level, clearing it generates another puzzle at that size. Each new level starts at a clear three-quarter viewing angle. Progress lasts for the current page session; reloading starts at 5 again.
+
+Run `npm test` (Node.js 18+) for directional rules, progression, and complete solutions at every supported size. No external dependencies or credentials are required. Internal faces are omitted and idle frames are not repainted.
