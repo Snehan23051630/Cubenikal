@@ -3,7 +3,7 @@ export function canEscape(block, blocks) {
  const axis=block.dir.findIndex(v=>v!==0);
  return !blocks.some(o=>o!==block&&!o.removed&&[0,1,2].every(i=>i===axis||o.pos[i]===block.pos[i])&&(o.pos[axis]-block.pos[axis])*block.dir[axis]>0);
 }
-export function makeLevel(size, random=Math.random) {
+export function makeLevel(size, random=Math.random, chained=false) {
  const blocks=[],occupied=new Map(),choices=[],known=new Set();
  const key=p=>p.join(',');
  for(let x=0;x<size;x++)for(let y=0;y<size;y++)for(let z=0;z<size;z++){
@@ -22,7 +22,7 @@ export function makeLevel(size, random=Math.random) {
  for(const b of blocks)DIRECTIONS.forEach((dir,i)=>addIfFree(b,dir,i));
  let remaining=blocks.length;
  while(remaining){
-  const index=Math.floor(random()*choices.length),{b,dir}=choices[index];
+  const index=chained&&random()<.92?choices.length-1:Math.floor(random()*choices.length),{b,dir}=choices[index];
   choices[index]=choices[choices.length-1];choices.pop();
   if(!occupied.has(key(b.pos)))continue;
   b.dir=[...dir];occupied.delete(key(b.pos));remaining--;

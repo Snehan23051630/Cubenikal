@@ -1,6 +1,9 @@
-import {makeLevel,canEscape} from './engine.js';
+import {canEscape} from './engine.js';
 import {LEVEL_SIZES,nextLevel} from './levels.js';
 const canvas=document.getElementById('puzzle'),ctx=canvas.getContext('2d');
+const selector=document.getElementById('size'),status=document.getElementById('status');
+const generator=new Worker(new URL('./generator.worker.js',import.meta.url),{type:'module'});
+let requestId=0,loading=false;
 let levelIndex=0,size=LEVEL_SIZES[0],advanceTimer=null;
 let blocks=[],yaw=-.65,pitch=.48,zoom=1,faces=[],width=0,height=0,finished=false,flash=null,flashUntil=0,revision=0,lastFrame='';
 function steelFace(face){
@@ -19,13 +22,23 @@ function rotate([x,y,z]){const a=x*Math.cos(yaw)+z*Math.sin(yaw),b=-x*Math.sin(y
 function project(p){const [x,y,z]=rotate(p),scale=Math.min(width*.37,height*.37)/size*zoom;const perspective=1/(1-z/(size*3.5));return[width/2+x*scale*perspective,height*.5-y*scale*perspective,z];}
 function newGame(){
  clearTimeout(advanceTimer);advanceTimer=null;
- size=LEVEL_SIZES[levelIndex];blocks=makeLevel(size);finished=false;flash=null;
- yaw=-.65;pitch=.48;zoom=1;revision++;
- document.title=`Cubenikal · ${size} × ${size} × ${size}`;
- canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to release, scroll or pinch to zoom. Press R to restart this level.`);
+ size=LEVEL_SIZES[levelIndex];selector.value=String(levelIndex);
+ loading=true;blocks=[];faces=[];finished=false;flash=null;revision++;
+ status.textContent='Building a tougher puzzle…';canvas.setAttribute('aria-busy','true');
+ generator.postMessage({id:++requestId,size});
 }
+generator.onmessage=({data})=>{
+ if(data.id!==requestId)return;
+ if(data.error){status.textContent='Generation failed. Press R to retry.';canvas.setAttribute('aria-busy','false');return;}
+ blocks=data.blocks;loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
+ status.textContent='';canvas.setAttribute('aria-busy','false');
+ document.title=`Cubenikal · ${size} × ${size} × ${size}`;
+ canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to release, scroll or pinch to zoom. Press R for a new puzzle.`);
+};
+generator.onerror=()=>{status.textContent='Could not load the puzzle generator. Reload to retry.';canvas.setAttribute('aria-busy','false');};
+selector.onchange=()=>{levelIndex=Number(selector.value);newGame();};
 function attempt(b){
- if(b.removed||finished)return;
+ if(loading||b.removed||finished)return;
  if(canEscape(b,blocks)){b.removed=true;b.exit=performance.now();revision++;finished=blocks.every(b=>b.removed);
  if(finished)advanceTimer=setTimeout(()=>{levelIndex=nextLevel(levelIndex);newGame();},900);}
  else{flash=b;flashUntil=performance.now()+450;revision++;}
@@ -37,7 +50,7 @@ function arrow(face,center){
  // represents the actual movement, with no alternate ring or dot notation.
  if(d.some((v,i)=>v*n[i]!==0))return;
  const side=[n[1]*d[2]-n[2]*d[1],n[2]*d[0]-n[0]*d[2],n[0]*d[1]-n[1]*d[0]];
- const point=(along,across=0)=>project(center.map((v,i)=>v+d[i]*along+side[i]*across));
+ const point=(along,across=0)=>project(center.map((v,i)=>v+(d[i]*along+side[i]*across)*face.shrink));
  const tail=point(-.24),tip=point(.24),left=point(.045,.16),right=point(.045,-.16);
  ctx.strokeStyle='#303a43';
  ctx.lineWidth=Math.max(.85,Math.min(width*.37,height*.37)/size*zoom*.025);
@@ -57,9 +70,9 @@ function draw(now){
  }
  ctx.clearRect(0,0,width,height);faces=[];
  const occupied=new Set(blocks.filter(b=>!b.removed).map(b=>b.pos.join(',')));
- for(const b of blocks){let travel=0,alpha=1;if(b.removed){const elapsed=(now-b.exit)/650;if(!b.exit||elapsed>=1)continue;travel=elapsed*elapsed*size*5;alpha=1-elapsed;}
+ for(const b of blocks){let travel=0,alpha=1,shrink=1;if(b.removed){const elapsed=(now-b.exit)/650;if(!b.exit||elapsed>=1)continue;travel=elapsed*elapsed*size*5;alpha=1-elapsed;shrink=1-.25*Math.min(1,elapsed/.4);}
  const center=b.pos.map((v,i)=>v-(size-1)/2+b.dir[i]*travel);if(b===flash&&now<flashUntil)center[0]+=Math.sin(now*.06)*.04;
- for(const def of faceDefs){if(rotate(def.n)[2]<=.01)continue;if(!b.removed&&occupied.has(b.pos.map((v,i)=>v+def.n[i]).join(',')))continue;const fc=center.map((v,i)=>v+def.n[i]*.5);const pts=def.v.map(v=>project(center.map((n,i)=>n+v[i]*.5)));faces.push({b,def,center:fc,pts,z:project(fc)[2],alpha});}}
+ for(const def of faceDefs){if(rotate(def.n)[2]<=.01)continue;if(!b.removed&&occupied.has(b.pos.map((v,i)=>v+def.n[i]).join(',')))continue;const fc=center.map((v,i)=>v+def.n[i]*.5*shrink);const pts=def.v.map(v=>project(center.map((n,i)=>n+v[i]*.5*shrink)));faces.push({b,def,center:fc,pts,z:project(fc)[2],alpha,shrink});}}
  faces.sort((a,b)=>a.z-b.z);
  for(const f of faces){ctx.globalAlpha=f.alpha;polygon(f.pts);ctx.fillStyle=steelFace(f);ctx.fill();ctx.strokeStyle=f.b===flash&&now<flashUntil?'#e4ad83':'#4b565f';ctx.lineWidth=f.b===flash&&now<flashUntil?1.7:.85;ctx.stroke();
  // Inset highlight gives each block a shallow, solid steel bevel.
