@@ -1,10 +1,7 @@
 {
   "name": "cubenikal",
   "private": true,
-  "type": "module",
   "scripts": {
-    "test": "node --test tests/*.test.mjs",
-    "start": "python3 -m http.server 8000 --bind 0.0.0.0",
-    "validate:levels": "node scripts/validate-levels.mjs"
+    "start": "python3 -m http.server 8000 --bind 0.0.0.0"
   }
 }

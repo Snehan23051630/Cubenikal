@@ -1,10 +1,10 @@
-import {rotatePoint,projectPoint,pickBlock} from './camera.js';
-import {createSession,playMove,undoMove} from './session.js';
-import {LEVEL_SIZES,nextLevel} from './levels.js';
+// Cubenikal is intentionally self-contained: no framework, build step, or imports.
+const DIRECTIONS=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
+const LEVEL_SIZES=Object.freeze([5,7,9,11,13,15]);
+const positionKey=point=>point.join(',');
 const canvas=document.getElementById('puzzle'),ctx=canvas.getContext('2d');
 const selector=document.getElementById('size'),status=document.getElementById('status');
-let generator=null;
-let requestId=0,loading=false,session=null;
+let loading=false,session=null;
 const moveCount=document.getElementById('moves'),undoButton=document.getElementById('undo');
 let levelIndex=0,size=LEVEL_SIZES[0],advanceTimer=null;
 let blocks=[],yaw=-.65,pitch=.48,zoom=1,faces=[],width=0,height=0,finished=false,flash=null,flashUntil=0,revision=0,lastFrame='';
@@ -28,20 +28,19 @@ function newGame(){
  size=LEVEL_SIZES[levelIndex];selector.value=String(levelIndex);
  loading=true;session=null;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
  status.textContent='Building a tougher puzzle…';canvas.setAttribute('aria-busy','true');
- generator?.terminate();
- generator=new Worker(new URL('./generator.worker.js',import.meta.url),{type:'module'});
- generator.onmessage=receivePuzzle;generator.onerror=generationError;
- generator.postMessage({id:++requestId,size});
+ // Yield once so the loading message paints before the deliberate, local search.
+ setTimeout(()=>{
+  try{receivePuzzle(makeHardLevel(size));}
+  catch(error){generationError(error);}
+ },20);
 }
-function receivePuzzle({data}){
- if(data.id!==requestId)return;
- if(data.error){status.textContent='No puzzle met all constraints. Reset to retry.';canvas.setAttribute('aria-busy','false');return;}
- blocks=data.blocks;session=createSession(blocks);loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
+function receivePuzzle({blocks:generatedBlocks,analysis}){
+ blocks=generatedBlocks;session=createSession(blocks);loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
  status.textContent='Tap to slide into a gap, or escape along a clear path.';updateControls();canvas.setAttribute('aria-busy','false');
  document.title=`Cubenikal · ${size} × ${size} × ${size}`;
  canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to slide or release, scroll or pinch to zoom. Press R for a new puzzle.`);
 };
-function generationError(){status.textContent='Could not load the puzzle generator. Reload to retry.';canvas.setAttribute('aria-busy','false');};
+function generationError(){loading=false;status.textContent='No puzzle met all constraints. Reset to retry.';canvas.setAttribute('aria-busy','false');};
 selector.onchange=()=>{levelIndex=Number(selector.value);newGame();};
 const SLIDE_MS=260;
 function sliding(block,now=performance.now()){return block.slide&&now-block.slide.started<SLIDE_MS;}
@@ -61,7 +60,7 @@ function attempt(b){
  else if(result==='slid'){b.slide={from,started:performance.now()};status.textContent='Slid into the gap.';}
  else{flash=b;flashUntil=performance.now()+450;status.textContent='Another block is directly in the way.';}
  finished=session.complete;updateControls();
- if(finished){status.textContent='Cleared. Loading the next puzzle…';advanceTimer=setTimeout(()=>{levelIndex=nextLevel(levelIndex);newGame();},900);}
+ if(finished){status.textContent='Cleared. Loading the next puzzle…';advanceTimer=setTimeout(()=>{levelIndex=Math.min(levelIndex+1,LEVEL_SIZES.length-1);newGame();},900);}
 }
 undoButton.onclick=()=>{
  if(session&&undoMove(session)){
@@ -127,3 +126,140 @@ canvas.addEventListener('pointercancel',e=>{pointers.delete(e.pointerId);drag=nu
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=Math.max(.55,Math.min(1.65,zoom*Math.exp(-e.deltaY*.001)));},{passive:false});
 window.addEventListener('keydown',e=>{if(e.key.toLowerCase()==='r')newGame();});
 newGame();requestAnimationFrame(draw);
+
+function rotatePoint([x,y,z],yaw,pitch){
+ const a=x*Math.cos(yaw)+z*Math.sin(yaw),b=-x*Math.sin(yaw)+z*Math.cos(yaw);
+ return [a,y*Math.cos(pitch)-b*Math.sin(pitch),y*Math.sin(pitch)+b*Math.cos(pitch)];
+}
+function inverseRotatePoint([x,y,z],yaw,pitch){
+ const a=y*Math.cos(pitch)+z*Math.sin(pitch),b=-y*Math.sin(pitch)+z*Math.cos(pitch);
+ return [x*Math.cos(yaw)-b*Math.sin(yaw),a,x*Math.sin(yaw)+b*Math.cos(yaw)];
+}
+function projectPoint(point,camera){
+ const {yaw,pitch,size,width,height,zoom}=camera,[x,y,z]=rotatePoint(point,yaw,pitch),distance=size*3.5;
+ if(distance-z<=.1)return null;
+ const scale=Math.min(width*.37,height*.37)/size*zoom,perspective=distance/(distance-z);
+ return [width/2+x*scale*perspective,height/2-y*scale*perspective,z];
+}
+function pickBlock(x,y,allBlocks,camera){
+ const {yaw,pitch,size,width,height,zoom}=camera,distance=size*3.5,scale=Math.min(width*.37,height*.37)/size*zoom;
+ if(!scale)return null;
+ const origin=inverseRotatePoint([0,0,distance],yaw,pitch),ray=inverseRotatePoint([(x-width/2)/scale,(height/2-y)/scale,-distance],yaw,pitch);
+ let selected=null,nearest=Infinity;
+ for(const block of allBlocks){
+  if(block.removed)continue;
+  const center=block.pos.map(v=>v-(size-1)/2);let enter=0,leave=Infinity;
+  for(let axis=0;axis<3;axis++){
+   const low=center[axis]-.5,high=center[axis]+.5;
+   if(Math.abs(ray[axis])<1e-10){if(origin[axis]<low||origin[axis]>high){leave=-1;break;}continue;}
+   const a=(low-origin[axis])/ray[axis],b=(high-origin[axis])/ray[axis];enter=Math.max(enter,Math.min(a,b));leave=Math.min(leave,Math.max(a,b));
+   if(enter>leave)break;
+  }
+  if(enter<=leave&&enter<nearest){nearest=enter;selected=block;}
+ }
+ return selected;
+}
+function moveDistance(block,allBlocks){
+ const axis=block.dir.findIndex(v=>v!==0);let nearest=Infinity;
+ for(const other of allBlocks){
+  if(other===block||other.removed||!block.pos.every((v,i)=>i===axis||v===other.pos[i]))continue;
+  const distance=(other.pos[axis]-block.pos[axis])*block.dir[axis];if(distance>0)nearest=Math.min(nearest,distance);
+ }
+ return nearest===Infinity?Infinity:nearest-1;
+}
+function canEscape(block,allBlocks){return moveDistance(block,allBlocks)===Infinity;}
+function createSession(allBlocks){return {blocks:allBlocks,history:[],complete:allBlocks.every(b=>b.removed)};}
+function playMove(currentSession,block){
+ if(currentSession.complete||block.removed||!currentSession.blocks.includes(block))return 'ignored';
+ const distance=moveDistance(block,currentSession.blocks);if(distance===0)return 'blocked';
+ currentSession.history.push({block,pos:[...block.pos],removed:block.removed});delete block.slide;
+ if(distance===Infinity){block.removed=true;currentSession.complete=currentSession.blocks.every(b=>b.removed);return 'removed';}
+ block.pos=block.pos.map((v,i)=>v+block.dir[i]*distance);return 'slid';
+}
+function undoMove(currentSession){
+ if(!currentSession.history.length)return false;
+ const {block,pos,removed}=currentSession.history.pop();block.pos=pos;block.removed=removed;delete block.exit;delete block.slide;
+ currentSession.complete=currentSession.blocks.every(b=>b.removed);return true;
+}
+function planAssembly(size,random=Math.random){
+ const mid=(size-1)/2,allBlocks=[],lookup=new Map();
+ for(let x=0;x<size;x++)for(let y=0;y<size;y++)for(let z=0;z<size;z++){const block={id:allBlocks.length,pos:[x,y,z],dir:null,removed:false};allBlocks.push(block);lookup.set(positionKey(block.pos),block);}
+ const radius=block=>Math.max(...block.pos.map(v=>Math.abs(v-mid))),removal=[];
+ for(let r=mid;r>=0;r--){
+  const shell=allBlocks.filter(block=>radius(block)===r);let solved=false;
+  for(let trial=0;trial<80&&!solved;trial++){
+   for(const block of shell){block.removed=false;block.dir=null;}
+   const choices=[],known=new Set(),sequence=[];
+   function add(block,directionIndex){
+    if(block.removed||radius(block)!==r)return;const token=block.id*6+directionIndex;if(known.has(token))return;
+    const direction=DIRECTIONS[directionIndex];
+    for(let step=1;step<size;step++){const point=block.pos.map((v,i)=>v+direction[i]*step);if(point.some(v=>v<0||v>=size))break;if(!lookup.get(positionKey(point)).removed)return;}
+    known.add(token);choices.push({block,directionIndex});
+   }
+   for(const block of shell)for(let d=0;d<6;d++)add(block,d);
+   while(choices.length){
+    const index=Math.floor(random()*choices.length),{block,directionIndex}=choices[index];choices[index]=choices.at(-1);choices.pop();if(block.removed)continue;
+    const direction=DIRECTIONS[directionIndex];
+    if(DIRECTIONS.some(n=>lookup.get(positionKey(block.pos.map((v,i)=>v+n[i])))?.dir?.every((v,i)=>v===direction[i])))continue;
+    block.dir=[...direction];block.removed=true;sequence.push(block);
+    for(let ray=0;ray<6;ray++)for(let step=1;step<size;step++){
+     const point=block.pos.map((v,i)=>v+DIRECTIONS[ray][i]*step);if(point.some(v=>v<0||v>=size))break;
+     const other=lookup.get(positionKey(point));if(!other.removed){add(other,ray^1);break;}
+    }
+   }
+   if(sequence.length===shell.length){removal.push(...sequence);solved=true;}
+  }
+  if(!solved)return null;
+ }
+ return removal.reverse().map(block=>({...block,removed:false}));
+}
+function analyzeDifficulty(allBlocks){
+ const lookup=new Map(allBlocks.map((block,i)=>[positionKey(block.pos),i])),waiting=allBlocks.map(()=>0),dependents=allBlocks.map(()=>[]),depth=allBlocks.map(()=>1),cubeSize=1+Math.max(...allBlocks.flatMap(block=>block.pos));
+ allBlocks.forEach((block,i)=>{
+  const point=[...block.pos];
+  for(let step=1;step<cubeSize;step++){for(let axis=0;axis<3;axis++)point[axis]+=block.dir[axis];if(point.some(v=>v<0||v>=cubeSize))break;const blocker=lookup.get(positionKey(point));if(blocker!==undefined){waiting[i]++;dependents[blocker].push(i);}}
+ });
+ const queue=waiting.flatMap((n,i)=>n===0?[i]:[]),initialOpenings=queue.length;
+ for(let head=0;head<queue.length;head++)for(const i of dependents[queue[head]]){depth[i]=Math.max(depth[i],depth[queue[head]]+1);if(--waiting[i]===0)queue.push(i);}
+ const solvable=queue.length===allBlocks.length,maxDepth=Math.max(...depth),meanDepth=depth.reduce((a,b)=>a+b,0)/allBlocks.length;
+ return {solvable,score:solvable?maxDepth+meanDepth*2-initialOpenings/allBlocks.length*100:-Infinity,maxDepth,meanDepth,initialOpenings};
+}
+function minimumDepth(cubeSize){return Math.max(30,cubeSize*4);}
+function buildGraph(allBlocks){
+ const lookup=new Map(allBlocks.map((block,i)=>[positionKey(block.pos),i])),pending=allBlocks.map(()=>0),followers=allBlocks.map(()=>[]),cubeSize=1+Math.max(...allBlocks.flatMap(block=>block.pos)),axes=new Set();let crossAxisEdges=0;
+ allBlocks.forEach((block,i)=>{
+  for(let step=1;step<cubeSize;step++){
+   const point=block.pos.map((v,j)=>v+block.dir[j]*step);if(point.some(v=>v<0||v>=cubeSize))break;const j=lookup.get(positionKey(point));if(j===undefined)continue;
+   pending[i]++;followers[j].push(i);if(block.dir.findIndex(v=>v)!==allBlocks[j].dir.findIndex(v=>v)){crossAxisEdges++;axes.add(block.dir.findIndex(v=>v));axes.add(allBlocks[j].dir.findIndex(v=>v));}
+  }
+ });
+ return {pending,followers,crossAxisEdges,dependencyAxes:[...axes]};
+}
+function validatePatterns(allBlocks,cubeSize){
+ const lookup=new Map(allBlocks.map(block=>[positionKey(block.pos),block]));let adjacentMatches=0;
+ for(const block of allBlocks)for(const direction of DIRECTIONS){const other=lookup.get(positionKey(block.pos.map((v,i)=>v+direction[i])));if(other&&other.dir.every((v,i)=>v===block.dir[i]))adjacentMatches++;}
+ const analysis=analyzeDifficulty(allBlocks),graph=buildGraph(allBlocks),queue=graph.pending.flatMap((n,i)=>n===0?[i]:[]);
+ for(let head=0;head<queue.length;head++)for(const i of graph.followers[queue[head]])if(--graph.pending[i]===0)queue.push(i);
+ const accepted=queue.length===allBlocks.length&&adjacentMatches===0&&analysis.initialOpenings<=allBlocks.length*.15&&analysis.maxDepth>=minimumDepth(cubeSize)&&graph.crossAxisEdges>=allBlocks.length/2&&graph.dependencyAxes.length===3;
+ return {...analysis,accepted,adjacentMatches:adjacentMatches/2,minMoves:queue.length===allBlocks.length?allBlocks.length:null,crossAxisEdges:graph.crossAxisEdges,requiredDepth:minimumDepth(cubeSize)};
+}
+function makeHardLevel(cubeSize,{random=Math.random,attempts=8,iterations=24000}={}){
+ const mid=(cubeSize-1)/2;
+ for(let attempt=0;attempt<attempts;attempt++){
+  const allBlocks=planAssembly(cubeSize,random);if(!allBlocks)continue;const lookup=new Map(allBlocks.map(block=>[positionKey(block.pos),block]));
+  let analysis=analyzeDifficulty(allBlocks),cost=value=>value.initialOpenings*10-Math.min(value.maxDepth,minimumDepth(cubeSize))*2-value.meanDepth*.1,current=cost(analysis);
+  const radius=block=>Math.max(...block.pos.map(v=>Math.abs(v-mid)));
+  for(let iteration=0;iteration<iterations;iteration++){
+   if(analysis.initialOpenings<=allBlocks.length*.15&&analysis.maxDepth>=minimumDepth(cubeSize)){
+    const validated=validatePatterns(allBlocks,cubeSize);if(validated.accepted)return {blocks:allBlocks,analysis:validated};
+   }
+   const block=allBlocks[Math.floor(random()*allBlocks.length)];if(radius(block)===0)continue;
+   const direction=DIRECTIONS[Math.floor(random()*6)],axis=direction.findIndex(v=>v);if(block.dir.every((v,i)=>v===direction[i]))continue;
+   if(DIRECTIONS.some(d=>lookup.get(positionKey(block.pos.map((v,i)=>v+d[i])))?.dir.every((v,i)=>v===direction[i])))continue;
+   if(Math.max(...block.pos.filter((_,i)=>i!==axis).map(v=>Math.abs(v-mid)))<radius(block)&&(mid-block.pos[axis])*direction[axis]>0)continue;
+   const old=block.dir;block.dir=[...direction];const next=analyzeDifficulty(allBlocks),score=cost(next),temperature=2*(1-(iteration%6000)/6000);
+   if(next.solvable&&(score<=current||random()<Math.exp((current-score)/temperature))){analysis=next;current=score;}else block.dir=old;
+  }
+ }
+ throw Error('No layout met all pattern and depth requirements.');
+}
