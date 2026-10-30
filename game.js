@@ -1,12 +1,11 @@
 // Cubenikal is intentionally self-contained: no framework, build step, or imports.
 const DIRECTIONS=[[1,0,0],[-1,0,0],[0,1,0],[0,-1,0],[0,0,1],[0,0,-1]];
-const LEVEL_SIZES=Object.freeze([5,7,9,11,13,15]);
 const positionKey=point=>point.join(',');
 const canvas=document.getElementById('puzzle'),ctx=canvas.getContext('2d');
-const selector=document.getElementById('size'),status=document.getElementById('status');
+const dimensionInputs=['width','height','depth'].map(id=>document.getElementById(id)),unevenInput=document.getElementById('uneven'),status=document.getElementById('status');
 let loading=false,session=null;
 const moveCount=document.getElementById('moves'),undoButton=document.getElementById('undo');
-let levelIndex=0,size=LEVEL_SIZES[0],advanceTimer=null;
+let dimensions=[5,5,5],size=5,advanceTimer=null,generation=0;
 let blocks=[],yaw=-.65,pitch=.48,zoom=1,faces=[],width=0,height=0,finished=false,flash=null,flashUntil=0,revision=0,lastFrame='';
 function steelFace(face){
  const n=rotate(face.def.n);
@@ -20,28 +19,29 @@ function steelFace(face){
  return gradient;
 }
 const faceDefs=[{n:[1,0,0],v:[[1,-1,-1],[1,1,-1],[1,1,1],[1,-1,1]]},{n:[-1,0,0],v:[[-1,-1,1],[-1,1,1],[-1,1,-1],[-1,-1,-1]]},{n:[0,1,0],v:[[-1,1,-1],[-1,1,1],[1,1,1],[1,1,-1]]},{n:[0,-1,0],v:[[-1,-1,1],[-1,-1,-1],[1,-1,-1],[1,-1,1]]},{n:[0,0,1],v:[[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]]},{n:[0,0,-1],v:[[1,-1,-1],[-1,-1,-1],[-1,1,-1],[1,1,-1]]}];
-function camera(){return {yaw,pitch,size,width,height,zoom};}
+function camera(){return {yaw,pitch,size,dimensions,width,height,zoom};}
 function rotate(point){return rotatePoint(point,yaw,pitch);}
 function project(point){return projectPoint(point,camera());}
 function newGame(){
  clearTimeout(advanceTimer);advanceTimer=null;
- size=LEVEL_SIZES[levelIndex];selector.value=String(levelIndex);
+ dimensions=dimensionInputs.map(input=>{const value=Math.max(5,Math.min(15,Math.round(Number(input.value)||5)));input.value=value;return value;});
+ size=Math.max(...dimensions);const request=++generation,shape=unevenInput.checked;
  loading=true;session=null;moveCount.textContent='';undoButton.disabled=true;blocks=[];faces=[];finished=false;flash=null;revision++;
  status.textContent='Building a tougher puzzle…';canvas.setAttribute('aria-busy','true');
  // Yield once so the loading message paints before the deliberate, local search.
  setTimeout(()=>{
-  try{receivePuzzle(makeHardLevel(size));}
+  if(request!==generation)return;
+  try{receivePuzzle(makeHardLevel(dimensions,{uneven:shape}));}
   catch(error){generationError(error);}
  },20);
 }
 function receivePuzzle({blocks:generatedBlocks,analysis}){
  blocks=generatedBlocks;session=createSession(blocks);loading=false;yaw=-.65;pitch=.48;zoom=1;revision++;
  status.textContent='Tap to slide into a gap, or escape along a clear path.';updateControls();canvas.setAttribute('aria-busy','false');
- document.title=`Cubenikal · ${size} × ${size} × ${size}`;
- canvas.setAttribute('aria-label',`${size} by ${size} by ${size} steel cube puzzle. Drag to rotate, tap to slide or release, scroll or pinch to zoom. Press R for a new puzzle.`);
+ document.title=`Cubenikal · ${dimensions.join(" × ")}`;
+ canvas.setAttribute('aria-label',`${dimensions.join(" by ")} steel block puzzle. Drag to rotate, tap to slide or release, scroll or pinch to zoom. Press R for a new puzzle.`);
 };
-function generationError(){loading=false;status.textContent='No puzzle met all constraints. Reset to retry.';canvas.setAttribute('aria-busy','false');};
-selector.onchange=()=>{levelIndex=Number(selector.value);newGame();};
+function generationError(){loading=false;status.textContent='Could not generate a puzzle. Choose New puzzle to retry.';canvas.setAttribute('aria-busy','false');};
 const SLIDE_MS=260;
 function sliding(block,now=performance.now()){return block.slide&&now-block.slide.started<SLIDE_MS;}
 function updateControls(){
@@ -60,7 +60,7 @@ function attempt(b){
  else if(result==='slid'){b.slide={from,started:performance.now()};status.textContent='Slid into the gap.';}
  else{flash=b;flashUntil=performance.now()+450;status.textContent='Another block is directly in the way.';}
  finished=session.complete;updateControls();
- if(finished){status.textContent='Cleared. Loading the next puzzle…';advanceTimer=setTimeout(()=>{levelIndex=Math.min(levelIndex+1,LEVEL_SIZES.length-1);newGame();},900);}
+ if(finished){status.textContent='Cleared. Loading the next puzzle…';advanceTimer=setTimeout(()=>{dimensionInputs.forEach(input=>{input.value=Math.min(15,Number(input.value)+2);});newGame();},900);}
 }
 undoButton.onclick=()=>{
  if(session&&undoMove(session)){
@@ -100,7 +100,7 @@ function draw(now){
  for(const b of blocks){let travel=0,alpha=1,shrink=1;if(b.removed){const elapsed=(now-b.exit)/650;if(!b.exit||elapsed>=1)continue;travel=elapsed*elapsed*size*5;alpha=1-elapsed;shrink=1-.25*Math.min(1,elapsed/.4);}
  const progress=b.slide?Math.min(1,(now-b.slide.started)/SLIDE_MS):1,eased=1-(1-progress)**3;
  const position=sliding(b,now)?b.slide.from.map((v,i)=>v+(b.pos[i]-v)*eased):b.pos;
- const center=position.map((v,i)=>v-(size-1)/2+b.dir[i]*travel);if(b===flash&&now<flashUntil)center[0]+=Math.sin(now*.06)*.04;
+ const center=position.map((v,i)=>v-(dimensions[i]-1)/2+b.dir[i]*travel);if(b===flash&&now<flashUntil)center[0]+=Math.sin(now*.06)*.04;
  // Stop the entire departing cube before it crosses the near plane.
  if(rotate(center)[2]+Math.sqrt(3)*.5*shrink>=size*3.5-.1)continue;
  for(const def of faceDefs){
@@ -142,13 +142,13 @@ function projectPoint(point,camera){
  return [width/2+x*scale*perspective,height/2-y*scale*perspective,z];
 }
 function pickBlock(x,y,allBlocks,camera){
- const {yaw,pitch,size,width,height,zoom}=camera,distance=size*3.5,scale=Math.min(width*.37,height*.37)/size*zoom;
+ const {yaw,pitch,size,dimensions,width,height,zoom}=camera,distance=size*3.5,scale=Math.min(width*.37,height*.37)/size*zoom;
  if(!scale)return null;
  const origin=inverseRotatePoint([0,0,distance],yaw,pitch),ray=inverseRotatePoint([(x-width/2)/scale,(height/2-y)/scale,-distance],yaw,pitch);
  let selected=null,nearest=Infinity;
  for(const block of allBlocks){
   if(block.removed)continue;
-  const center=block.pos.map(v=>v-(size-1)/2);let enter=0,leave=Infinity;
+  const center=block.pos.map((v,i)=>v-(dimensions[i]-1)/2);let enter=0,leave=Infinity;
   for(let axis=0;axis<3;axis++){
    const low=center[axis]-.5,high=center[axis]+.5;
    if(Math.abs(ray[axis])<1e-10){if(origin[axis]<low||origin[axis]>high){leave=-1;break;}continue;}
@@ -181,19 +181,26 @@ function undoMove(currentSession){
  const {block,pos,removed}=currentSession.history.pop();block.pos=pos;block.removed=removed;delete block.exit;delete block.slide;
  currentSession.complete=currentSession.blocks.every(b=>b.removed);return true;
 }
-function planAssembly(size,random=Math.random){
- const mid=(size-1)/2,allBlocks=[],lookup=new Map();
- for(let x=0;x<size;x++)for(let y=0;y<size;y++)for(let z=0;z<size;z++){const block={id:allBlocks.length,pos:[x,y,z],dir:null,removed:false};allBlocks.push(block);lookup.set(positionKey(block.pos),block);}
- const radius=block=>Math.max(...block.pos.map(v=>Math.abs(v-mid))),removal=[];
- for(let r=mid;r>=0;r--){
-  const shell=allBlocks.filter(block=>radius(block)===r);let solved=false;
+function planAssembly(dimensions,random=Math.random,uneven=false){
+ const allBlocks=[],lookup=new Map(),maxSize=Math.max(...dimensions);
+ // Clip a few corners to create a stepped outline while keeping the interior connected.
+ const corners=uneven?Array.from({length:3},()=>dimensions.map(()=>random()<.5?0:1)):[];
+ for(let x=0;x<dimensions[0];x++)for(let y=0;y<dimensions[1];y++)for(let z=0;z<dimensions[2];z++){
+  const pos=[x,y,z];
+  if(corners.some(corner=>pos.reduce((sum,v,i)=>sum+(corner[i]?dimensions[i]-1-v:v),0)<=1))continue;
+  const block={id:allBlocks.length,pos,dir:null,removed:false};allBlocks.push(block);lookup.set(positionKey(pos),block);
+ }
+ const layer=block=>Math.min(...block.pos.map((v,i)=>Math.min(v,dimensions[i]-1-v))),removal=[];
+ const layers=Math.ceil(Math.min(...dimensions)/2);
+ for(let r=0;r<layers;r++){
+  const shell=allBlocks.filter(block=>layer(block)===r);let solved=false;
   for(let trial=0;trial<80&&!solved;trial++){
    for(const block of shell){block.removed=false;block.dir=null;}
    const choices=[],known=new Set(),sequence=[];
    function add(block,directionIndex){
-    if(block.removed||radius(block)!==r)return;const token=block.id*6+directionIndex;if(known.has(token))return;
+    if(block.removed||layer(block)!==r)return;const token=block.id*6+directionIndex;if(known.has(token))return;
     const direction=DIRECTIONS[directionIndex];
-    for(let step=1;step<size;step++){const point=block.pos.map((v,i)=>v+direction[i]*step);if(point.some(v=>v<0||v>=size))break;if(!lookup.get(positionKey(point)).removed)return;}
+    for(let step=1;step<maxSize;step++){const point=block.pos.map((v,i)=>v+direction[i]*step);if(point.some((v,i)=>v<0||v>=dimensions[i]))break;if(lookup.get(positionKey(point))?.removed===false)return;}
     known.add(token);choices.push({block,directionIndex});
    }
    for(const block of shell)for(let d=0;d<6;d++)add(block,d);
@@ -202,9 +209,9 @@ function planAssembly(size,random=Math.random){
     const direction=DIRECTIONS[directionIndex];
     if(DIRECTIONS.some(n=>lookup.get(positionKey(block.pos.map((v,i)=>v+n[i])))?.dir?.every((v,i)=>v===direction[i])))continue;
     block.dir=[...direction];block.removed=true;sequence.push(block);
-    for(let ray=0;ray<6;ray++)for(let step=1;step<size;step++){
-     const point=block.pos.map((v,i)=>v+DIRECTIONS[ray][i]*step);if(point.some(v=>v<0||v>=size))break;
-     const other=lookup.get(positionKey(point));if(!other.removed){add(other,ray^1);break;}
+    for(let ray=0;ray<6;ray++)for(let step=1;step<maxSize;step++){
+     const point=block.pos.map((v,i)=>v+DIRECTIONS[ray][i]*step);if(point.some((v,i)=>v<0||v>=dimensions[i]))break;
+     const other=lookup.get(positionKey(point));if(other&&!other.removed){add(other,ray^1);break;}
     }
    }
    if(sequence.length===shell.length){removal.push(...sequence);solved=true;}
@@ -243,23 +250,24 @@ function validatePatterns(allBlocks,cubeSize){
  const accepted=queue.length===allBlocks.length&&adjacentMatches===0&&analysis.initialOpenings<=allBlocks.length*.15&&analysis.maxDepth>=minimumDepth(cubeSize)&&graph.crossAxisEdges>=allBlocks.length/2&&graph.dependencyAxes.length===3;
  return {...analysis,accepted,adjacentMatches:adjacentMatches/2,minMoves:queue.length===allBlocks.length?allBlocks.length:null,crossAxisEdges:graph.crossAxisEdges,requiredDepth:minimumDepth(cubeSize)};
 }
-function makeHardLevel(cubeSize,{random=Math.random,attempts=8,iterations=24000}={}){
- const mid=(cubeSize-1)/2;
+function makeHardLevel(dimensions,{random=Math.random,attempts=2,iterations,uneven=false}={}){
+ const cubeSize=Math.max(...dimensions);let best=null;
+ iterations??=Math.min(500,Math.max(30,Math.floor(40000/dimensions.reduce((a,b)=>a*b,1))));
  for(let attempt=0;attempt<attempts;attempt++){
-  const allBlocks=planAssembly(cubeSize,random);if(!allBlocks)continue;const lookup=new Map(allBlocks.map(block=>[positionKey(block.pos),block]));
+  const allBlocks=planAssembly(dimensions,random,uneven);if(!allBlocks)continue;const lookup=new Map(allBlocks.map(block=>[positionKey(block.pos),block]));
   let analysis=analyzeDifficulty(allBlocks),cost=value=>value.initialOpenings*10-Math.min(value.maxDepth,minimumDepth(cubeSize))*2-value.meanDepth*.1,current=cost(analysis);
-  const radius=block=>Math.max(...block.pos.map(v=>Math.abs(v-mid)));
   for(let iteration=0;iteration<iterations;iteration++){
    if(analysis.initialOpenings<=allBlocks.length*.15&&analysis.maxDepth>=minimumDepth(cubeSize)){
     const validated=validatePatterns(allBlocks,cubeSize);if(validated.accepted)return {blocks:allBlocks,analysis:validated};
    }
-   const block=allBlocks[Math.floor(random()*allBlocks.length)];if(radius(block)===0)continue;
-   const direction=DIRECTIONS[Math.floor(random()*6)],axis=direction.findIndex(v=>v);if(block.dir.every((v,i)=>v===direction[i]))continue;
+   const block=allBlocks[Math.floor(random()*allBlocks.length)];
+   const direction=DIRECTIONS[Math.floor(random()*6)];if(block.dir.every((v,i)=>v===direction[i]))continue;
    if(DIRECTIONS.some(d=>lookup.get(positionKey(block.pos.map((v,i)=>v+d[i])))?.dir.every((v,i)=>v===direction[i])))continue;
-   if(Math.max(...block.pos.filter((_,i)=>i!==axis).map(v=>Math.abs(v-mid)))<radius(block)&&(mid-block.pos[axis])*direction[axis]>0)continue;
    const old=block.dir;block.dir=[...direction];const next=analyzeDifficulty(allBlocks),score=cost(next),temperature=2*(1-(iteration%6000)/6000);
    if(next.solvable&&(score<=current||random()<Math.exp((current-score)/temperature))){analysis=next;current=score;}else block.dir=old;
   }
+  if(!best||analysis.score>best.analysis.score)best={blocks:allBlocks.map(block=>({...block,pos:[...block.pos],dir:[...block.dir]})),analysis};
  }
- throw Error('No layout met all pattern and depth requirements.');
+ if(best)return best;
+ throw Error('No solvable layout could be generated.');
 }
