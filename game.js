@@ -183,11 +183,19 @@ function undoMove(currentSession){
 }
 function planAssembly(dimensions,random=Math.random,uneven=false){
  const allBlocks=[],lookup=new Map(),maxSize=Math.max(...dimensions);
- // Clip a few corners to create a stepped outline while keeping the interior connected.
- const corners=uneven?Array.from({length:3},()=>dimensions.map(()=>random()<.5?0:1)):[];
+ // Cut four distinct corners at varied depths to form a more irregular outline.
+ const corners=[];
+ if(uneven){
+  const available=Array.from({length:8},(_,i)=>[i&1,(i>>1)&1,(i>>2)&1]);
+  const maxCut=Math.min(5,Math.floor(Math.min(...dimensions)/2));
+  for(let i=0;i<4;i++){
+   const index=Math.floor(random()*available.length),corner=available.splice(index,1)[0];
+   corners.push({corner,depth:i===0?maxCut:Math.max(2,maxCut-(random()<.5?1:0))});
+  }
+ }
  for(let x=0;x<dimensions[0];x++)for(let y=0;y<dimensions[1];y++)for(let z=0;z<dimensions[2];z++){
   const pos=[x,y,z];
-  if(corners.some(corner=>pos.reduce((sum,v,i)=>sum+(corner[i]?dimensions[i]-1-v:v),0)<=1))continue;
+  if(corners.some(({corner,depth})=>pos.reduce((sum,v,i)=>sum+(corner[i]?dimensions[i]-1-v:v),0)<=depth))continue;
   const block={id:allBlocks.length,pos,dir:null,removed:false};allBlocks.push(block);lookup.set(positionKey(pos),block);
  }
  const layer=block=>Math.min(...block.pos.map((v,i)=>Math.min(v,dimensions[i]-1-v))),removal=[];

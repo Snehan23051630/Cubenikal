@@ -16,7 +16,7 @@ Open [http://localhost:8000](http://localhost:8000). Press `Ctrl+C` in the termi
 
 ## Play
 
-- Set **Width**, **Height**, and **Depth** independently, from 5 to 15 blocks. Choose **Uneven shape** for a shape with stepped corners, then select **New puzzle**.
+- Set **Width**, **Height**, and **Depth** independently, from 5 to 15 blocks. Choose **Uneven shape** for a shape with deeper, varied stepped corners, then select **New puzzle**.
 - Drag the puzzle to rotate it. Scroll to zoom, or pinch on a touch screen.
 - Tap or click a block to move it along its arrow. It flies out if its path is clear, slides into a gap if there is room, or stays put if the next block is in the way.
 - Select **Undo** to reverse a move. Undo is unlimited for the current puzzle.
