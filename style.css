@@ -3,3 +3,5 @@
 .controls{position:fixed;z-index:2;top:20px;left:24px;display:flex;align-items:center;gap:12px;color:#aab4bb;font:12px system-ui,sans-serif;flex-wrap:wrap;right:20px;pointer-events:none}.controls label,.controls select{pointer-events:auto}.controls select{font:inherit;color:#dde3e7;background:#182129;border:1px solid #44515a;border-radius:6px;padding:8px}#status{font-size:11px;color:#aab4bb}select:focus-visible{outline:2px solid #b9cbd8}
 
 .controls button{pointer-events:auto;font:inherit;background:#182129;color:#dde3e7;border:1px solid #44515a;border-radius:6px;padding:8px;cursor:pointer}.controls button:disabled{opacity:.4;cursor:default}#moves{font-variant-numeric:tabular-nums}
+
+.controls input[type=number]{pointer-events:auto;width:4em;font:inherit;color:#dde3e7;background:#182129;border:1px solid #44515a;border-radius:6px;padding:8px}.controls label{white-space:nowrap}.controls input[type=checkbox]{pointer-events:auto;accent-color:#aab4bb}.controls input:focus-visible{outline:2px solid #b9cbd8}
