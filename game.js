@@ -393,6 +393,7 @@ let pointers = new Map(),
   drag = null,
   pinchDistance = 0;
 canvas.addEventListener('pointerdown', (e) => {
+  canvas.focus({ preventScroll: true });
   canvas.setPointerCapture(e.pointerId);
   pointers.set(e.pointerId, [e.clientX, e.clientY]);
   drag = {
@@ -456,7 +457,11 @@ canvas.addEventListener(
   { passive: false }
 );
 window.addEventListener('keydown', (e) => {
-  if (e.key.toLowerCase() === 'r') newGame();
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || e.isComposing) return;
+  if (e.code === 'KeyR' || e.key.toLowerCase() === 'r') {
+    e.preventDefault();
+    newGame();
+  }
 });
 newGame();
 requestAnimationFrame(draw);
